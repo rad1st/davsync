@@ -3,7 +3,7 @@ DavSync: like rsync, for WebDAV.
 
 # About:
 DavSync is a small, self-contained tool for synchronizing local folders with
-remote folders via the WebDAV protocol. It requires only Python 2.7, and is
+remote folders via the WebDAV protocol. It requires only Python ~~2.7~~ 3, and is
 fully contained in the davsync file in order to make it easy to just copy to a
 server and start using it.
 
@@ -32,6 +32,6 @@ optional arguments:
   -p PASSWORD, --password PASSWORD
                         password for remote server
 
-Example: ./davsync -l username -p password https://site.com photos wd:photos
+Example: ./davsync -l username -p password https://any.owncloud.site ~/photos wd:remote.php/dav/files/username/photos
 ```
 
