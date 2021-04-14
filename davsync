@@ -34,13 +34,13 @@
 Simple utility to sync the contents of a remote WebDAV folder with a local one.
 '''
 
-from __future__ import print_function
+
 
 DEBUG = False
 MULTITHREADED = True
 NUM_WORKERS = 4
 
-import sys, urllib2, base64, os.path, argparse
+import sys, urllib.request, urllib.error, urllib.parse, base64, os.path, argparse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
@@ -50,7 +50,7 @@ if DEBUG:
     import ssl
 
 if MULTITHREADED :
-    import threading, Queue
+    import threading, queue
 
 RFC_1123_FORMAT = "%a, %d %b %Y %H:%M:%S GMT"
 
@@ -74,6 +74,10 @@ def pathjoin(*args) :
     '''
     return os.path.normpath(os.path.join(*args))
 
+
+def cmp(x, y):
+    return (x > y) - (x < y)
+
 class ProgressStep:
     '''
     For use in a 'with' block -- prints the given message on entry, and a
@@ -90,13 +94,13 @@ class ProgressStep:
         sys.stdout.write('done\n')
         sys.stdout.flush()
 
-class WebDAVRequest (urllib2.Request) :
+class WebDAVRequest (urllib.request.Request) :
     '''
     Simple extension of urllib2.Request that allows you to specify the method.
     '''
     def __init__(self, method, url, data=None, headers={},
                  origin_req_host=None, unverifiable=False):
-        urllib2.Request.__init__(self, url, data, headers, origin_req_host, unverifiable)
+        urllib.request.Request.__init__(self, url, data, headers, origin_req_host, unverifiable)
         self.method = method
 
     def get_method(self) :
@@ -156,10 +160,11 @@ class WebDAVFileSystem (FileSystem) :
 
     def _fetch(self, method, url, data=None, headers=None, retries=1) :
         request = WebDAVRequest(method, url)
-        b64 = base64.encodestring('{}:{}'.format(self.username, self.password)).strip()
+        b64 = base64.encodebytes(('{}:{}'.format(self.username, self.password)).encode()).decode().strip()
+
         request.add_header('Authorization', 'Basic {}'.format(b64))
         if headers :
-            for k, v in headers.items() :
+            for k, v in list(headers.items()) :
                 request.add_header(k, v)
 
         retryWait = RETRY_WAIT
@@ -170,10 +175,10 @@ class WebDAVFileSystem (FileSystem) :
                     ctx = ssl.create_default_context()
                     ctx.check_hostname = False
                     ctx.verify_mode = ssl.CERT_NONE
-                    result = urllib2.urlopen(request, data=data, context=ctx, timeout=TIMEOUT).read()
+                    result = urllib.request.urlopen(request, data=data, context=ctx, timeout=TIMEOUT).read()
 
                 else :
-                    result = urllib2.urlopen(request, data=data, timeout=TIMEOUT).read()
+                    result = urllib.request.urlopen(request, data=data, timeout=TIMEOUT).read()
 
                 break
             except :
@@ -220,11 +225,14 @@ class WebDAVFileSystem (FileSystem) :
 
         result = []
         for child in root :
-            name = urllib2.unquote(child.find('D:href', self.xmlns).text)
+            name = urllib.parse.unquote(child.find('D:href', self.xmlns).text)
 
             fullPath = os.path.normpath('./' + os.path.join(path, name))
-            mtime = datetime.strptime(child.find('.//D:getlastmodified', self.xmlns).text, RFC_1123_FORMAT)
-
+            last_modified = child.find('.//D:getlastmodified', self.xmlns)
+            if last_modified is not None:
+                mtime = datetime.strptime(last_modified.text, RFC_1123_FORMAT)
+            else:
+                mtime = None
             if self.isNodeCollection(child) :
                 d = Directory(fullPath, mtime)
                 subdir = []
@@ -320,12 +328,12 @@ class LocalFilesystem(FileSystem) :
         return 0
 
     def upload(self, fileName, data, retries=RETRIES) :
-        with open(fileName, 'w') as f :
+        with open(fileName, 'wb') as f :
             f.write(data)
         return len(data)
 
     def download(self, fileName, retries=RETRIES) :
-        with open(fileName, 'r') as f :
+        with open(fileName, 'rb') as f :
             return f.read()
 
 class SyncPlan :
@@ -406,8 +414,10 @@ class Syncer :
         rmFiles = []
         rmDirs = []
 
-        originEntities.sort(lambda a, b: cmp(a.name, b.name))
-        targetEntities.sort(lambda a, b: cmp(a.name, b.name))
+#        originEntities.sort(lambda a, b: cmp(a.name, b.name))
+#        targetEntities.sort(lambda a, b: cmp(a.name, b.name))
+        originEntities.sort(key=lambda a: a.name)
+        targetEntities.sort(key=lambda a: a.name)
 
         # XXX: Need to handle case where an entity is a file in one set and a directory in the other.
         originDirs = [ d for d in originEntities if isinstance(d, Directory) ]
@@ -422,9 +432,9 @@ class Syncer :
         # Sort these lists either ascending or descending to ensure that child
         # directories are created after their parents, and children are deleted
         # before their parents.
-        cmpPathDepth = lambda a, b: cmp(os.path.normpath(a.name).count('/'), os.path.normpath(b.name).count('/'))
-        dirPlan.toAdd.sort(cmpPathDepth)
-        dirPlan.toDelete.sort(cmpPathDepth, reverse=True)
+        cmpPathDepth = lambda a: os.path.normpath(a.name).count('/')
+        dirPlan.toAdd.sort(key=cmpPathDepth)
+        dirPlan.toDelete.sort(key=cmpPathDepth, reverse=True)
 
         # Return the sync plan as a list of (function, description) tuples.
         # Syncing then just involves iterating over this list and calling each
@@ -493,7 +503,7 @@ class Syncer :
         # imperfect, but hopefully will give directional guidance on overall
         # performance.
         aggregateBytesPerSecond = 0
-        for tid, bps in self.workerTransferRates.items() :
+        for tid, bps in list(self.workerTransferRates.items()) :
             aggregateBytesPerSecond += bps
 
         # compute the average transfer rate over the last n samples per worker,
@@ -556,7 +566,7 @@ class Syncer :
                 self.runSyncJob(j)
             return
 
-        q = Queue.Queue()
+        q = queue.Queue()
         for j in jobs :
             q.put(j)
 
@@ -565,7 +575,7 @@ class Syncer :
             while True :
                 try :
                     job = q.get(False)
-                except Queue.Empty :
+                except queue.Empty :
                     return
 
                 self.runSyncJob(job)
@@ -625,4 +635,3 @@ def main(argv) :
 
 if __name__ == '__main__' :
     main(sys.argv)
-
